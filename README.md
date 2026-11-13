@@ -4,7 +4,7 @@ A streaming analytics service that takes in a live stream of e-commerce order ev
 
 **Live demo:** https://demandpulse-ysvi.onrender.com  *(free tier: first load may take ~30s to wake up)*
 
-![DemandPulse dashboard](docs/dashboard.png)
+![DemandPulse dashboard](docs/demandpulse.png)
 
 ![architecture](https://img.shields.io/badge/stack-FastAPI%20%7C%20WebSockets%20%7C%20Holt--Winters%20%7C%20Docker-38bdf8)
 
