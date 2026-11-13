@@ -2,7 +2,9 @@
 
 A streaming analytics service that takes in a live stream of e-commerce order events, rolls them up into hourly demand per product category and region, forecasts the **next 24 hours**, and flags **demand spikes and drops** as they happen. Results stream to a live dashboard over WebSockets.
 
-**Live demo:** _<add Render URL>_
+**Live demo:** https://demandpulse-ysvi.onrender.com  *(free tier: first load may take ~30s to wake up)*
+
+![DemandPulse dashboard](docs/demandpulse.png)
 
 ![architecture](https://img.shields.io/badge/stack-FastAPI%20%7C%20WebSockets%20%7C%20Holt--Winters%20%7C%20Docker-38bdf8)
 
