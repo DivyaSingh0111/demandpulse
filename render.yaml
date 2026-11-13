@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: demandpulse
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: TICK_SECONDS
+        value: "1.5"
