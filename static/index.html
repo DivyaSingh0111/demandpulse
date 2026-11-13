@@ -1,1 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DemandPulse — Real-Time Demand Forecasting</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --bad:#f87171; --ok:#4ade80; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:18px 28px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; }
+  h1 { margin:0; font-size:22px; } h1 span { color:var(--accent); }
+  .status { color:var(--muted); font-size:14px; } .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--bad); margin-right:6px; }
+  .dot.live { background:var(--ok); }
+  main { padding:20px 28px; display:grid; gap:18px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; }
+  .card { background:var(--card); border-radius:12px; padding:16px; }
+  .kpi .label { color:var(--muted); font-size:13px; } .kpi .value { font-size:24px; font-weight:600; margin-top:4px; }
+  .row { display:grid; grid-template-columns:2fr 1fr; gap:18px; }
+  @media (max-width:900px){ .row { grid-template-columns:1fr; } }
+  select { background:#0b1220; color:var(--text); border:1px solid #334155; border-radius:6px; padding:6px 10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 6px; border-bottom:1px solid #334155; }
+  th { color:var(--muted); font-weight:500; }
+  .spike { color:var(--bad); } .drop { color:#fbbf24; }
+  .title { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  footer { color:var(--muted); font-size:12px; padding:0 28px 20px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Demand<span>Pulse</span></h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="conn">connecting…</span> · Sim time: <b id="simtime">–</b></div>
+</header>
+<main>
+  <section class="kpis">
+    <div class="card kpi"><div class="label">Units this hour (all)</div><div class="value" id="k-units">–</div></div>
+    <div class="card kpi"><div class="label">Revenue this hour</div><div class="value" id="k-rev">–</div></div>
+    <div class="card kpi"><div class="label">Live MAPE (selected, 7d)</div><div class="value" id="k-mape">–</div></div>
+    <div class="card kpi"><div class="label">Events processed</div><div class="value" id="k-events">–</div></div>
+    <div class="card kpi"><div class="label">Throughput (events/s)</div><div class="value" id="k-eps">–</div></div>
+  </section>
+  <section class="row">
+    <div class="card">
+      <div class="title"><b>Demand: last 72h actual vs. next 24h forecast</b>
+        <select id="cat"></select></div>
+      <canvas id="mainChart" height="120"></canvas>
+    </div>
+    <div class="card"><div class="title"><b>Units by region (this hour)</b></div><canvas id="regionChart"></canvas></div>
+  </section>
+  <section class="card">
+    <div class="title"><b>Detected anomalies</b><span class="status">rolling z-score on forecast residuals, |z| &gt; 3.5</span></div>
+    <table><thead><tr><th>Time</th><th>Category</th><th>Type</th><th>Actual</th><th>Expected</th><th>z</th></tr></thead>
+    <tbody id="anoms"><tr><td colspan="6">None yet</td></tr></tbody></table>
+  </section>
+</main>
+<footer>Streaming simulated order events → hourly aggregation → Holt-Winters forecasting → residual anomaly detection. 1 tick ≈ 1 simulated hour.</footer>
+<script>
+const fmt = n => n.toLocaleString();
+const catSel = document.getElementById('cat');
+let snapshot = null;
 
+const mainChart = new Chart(document.getElementById('mainChart'), {
+  type: 'line',
+  data: { labels: [], datasets: [
+    { label: 'Actual', data: [], borderColor: '#38bdf8', pointRadius: 0, tension: .25 },
+    { label: 'One-step prediction', data: [], borderColor: '#a78bfa', borderDash: [3,3], pointRadius: 0, tension: .25 },
+    { label: '24h forecast', data: [], borderColor: '#4ade80', borderDash: [6,4], pointRadius: 0, tension: .25 },
+  ]},
+  options: { animation: false, interaction: { mode: 'index', intersect: false },
+    scales: { x: { ticks: { color: '#94a3b8', maxTicksLimit: 8 } }, y: { ticks: { color: '#94a3b8' } } },
+    plugins: { legend: { labels: { color: '#e2e8f0' } } } }
+});
+const regionChart = new Chart(document.getElementById('regionChart'), {
+  type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: '#38bdf8' }] },
+  options: { animation: false, plugins: { legend: { display: false } },
+    scales: { x: { ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' } } } }
+});
+
+function render() {
+  const s = snapshot; if (!s) return;
+  if (!catSel.options.length) Object.keys(s.categories).forEach(c => catSel.add(new Option(c, c)));
+  const c = s.categories[catSel.value];
+  const n = c.actual.length, h = c.forecast.length;
+  mainChart.data.labels = s.labels.slice(-n).concat(s.forecast_labels);
+  mainChart.data.datasets[0].data = c.actual.concat(Array(h).fill(null));
+  mainChart.data.datasets[1].data = c.predicted.concat(Array(h).fill(null));
+  mainChart.data.datasets[2].data = Array(n - 1).fill(null).concat([c.actual[n - 1]], c.forecast);
+  mainChart.update();
+  regionChart.data.labels = Object.keys(s.regions);
+  regionChart.data.datasets[0].data = Object.values(s.regions);
+  regionChart.update();
+  document.getElementById('simtime').textContent = s.time;
+  document.getElementById('k-units').textContent = fmt(Object.values(s.categories).reduce((a, x) => a + x.latest, 0));
+  document.getElementById('k-rev').textContent = '$' + fmt(Math.round(s.revenue));
+  document.getElementById('k-mape').textContent = c.live_mape == null ? '–' : c.live_mape + '%';
+  document.getElementById('k-events').textContent = fmt(s.metrics.events_total);
+  document.getElementById('k-eps').textContent = fmt(s.metrics.events_per_sec);
+  document.getElementById('anoms').innerHTML = s.anomalies.length ? s.anomalies.map(a =>
+    `<tr><td>${a.time}</td><td>${a.category}</td><td class="${a.type}">${a.type}</td><td>${fmt(a.actual)}</td><td>${fmt(a.expected)}</td><td>${a.z}</td></tr>`
+  ).join('') : '<tr><td colspan="6">None yet</td></tr>';
+}
+catSel.onchange = render;
+
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => { document.getElementById('dot').classList.add('live'); document.getElementById('conn').textContent = 'live'; };
+  ws.onmessage = e => { snapshot = JSON.parse(e.data); render(); };
+  ws.onclose = () => { document.getElementById('dot').classList.remove('live'); document.getElementById('conn').textContent = 'reconnecting…'; setTimeout(connect, 2000); };
+}
+connect();
+</script>
+</body>
+</html>
